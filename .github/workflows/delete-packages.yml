@@ -1,0 +1,56 @@
+name: delete-packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      min-versions-to-keep:
+        type: number
+        description: Minimum number package versions to keep
+        required: false
+        default: 0
+        
+jobs:
+  get-packages:
+    name: Get Packages
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.get-packages.outputs.result }}
+    steps:
+    - name: Get Packages
+      uses: actions/github-script@v8
+      id: get-packages
+      with:
+        github-token: ${{ secrets.PACKAGE_DELETION_PAT }}
+        retries: 3
+        script: |
+          let ret = [];
+
+          for await (const response of github.paginate.iterator(
+            github.rest.packages.listPackagesForAuthenticatedUser,
+            { package_type: 'nuget', per_page: 100 }
+          )) {
+            const packages = response.data;
+            for(const idx in packages) ret.push(packages[idx].name);
+          }
+
+          console.log(`Number of packages found: ${ret.length}`);
+          console.log(`List of packages:`);
+          console.log(ret)
+          return ret;
+  
+  delete-packages:
+    name: Delete Packages
+    runs-on: ubuntu-latest
+    needs: get-packages
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.get-packages.outputs.packages) }}
+    steps:
+    - name: Delete Package
+      uses: actions/delete-package-versions@v5
+      with: 
+        token: ${{ secrets.PACKAGE_DELETION_PAT }}
+        package-name: ${{ matrix.package }}
+        package-type: 'nuget'
+        min-versions-to-keep: ${{ inputs.min-versions-to-keep }}
+        delete-only-pre-release-versions: "true"
